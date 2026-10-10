@@ -1,19 +1,31 @@
 import { useSyncExternalStore } from 'react'
-import { get, set } from 'idb-keyval'
+import { del, get, keys, set } from 'idb-keyval'
 import { createInitialData, DEFAULT_CATEGORIES } from './defaults'
 import { LOAN_INTEREST_CATEGORY } from './loans'
 import type { Asset, AssetSnapshot, Category, LedgerData, Loan, LoanPayment, ThemeMode, Transaction } from './types'
 
 const STORAGE_KEY = 'ledger-data-v1'
+/** IndexedDB가 실패할 때를 대비한 두 번째 사본 (localStorage) */
+const MIRROR_KEY = 'ledger-data-mirror-v1'
+/** 날짜별 자동 백업 (IndexedDB). 최근 AUTO_BACKUP_KEEP일치만 남긴다. */
+const AUTO_BACKUP_PREFIX = 'ledger-auto-backup-'
+const AUTO_BACKUP_KEEP = 14
 
 interface StoreState {
   data: LedgerData
   loaded: boolean
   /** 마지막 저장 실패 메시지. 성공하면 null로 돌아간다. */
   saveError: string | null
+  /**
+   * 저장소를 읽지 못했을 때 true. 이때 저장하면 빈 데이터로 기존 기록을 덮어쓸 수 있으므로
+   * 모든 변경을 막는다(가장 위험한 데이터 손실 경로).
+   */
+  readOnly: boolean
+  /** 주 저장소가 비어 있어 사본·자동 백업에서 되살렸을 때 안내 문구 */
+  recoveredFrom: string | null
 }
 
-let state: StoreState = { data: createInitialData(), loaded: false, saveError: null }
+let state: StoreState = { data: createInitialData(), loaded: false, saveError: null, readOnly: false, recoveredFrom: null }
 const listeners = new Set<() => void>()
 
 function emit() {
@@ -33,15 +45,109 @@ export function getData(): LedgerData {
   return state.data
 }
 
-export async function loadLedger(): Promise<void> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function readMirror(): LedgerData | undefined {
   try {
-    const saved = await get<LedgerData>(STORAGE_KEY)
-    if (saved) state = { ...state, data: normalize(saved) }
-  } catch (e) {
-    state = { ...state, saveError: `저장소를 열 수 없어요: ${String(e)}` }
+    const raw = localStorage.getItem(MIRROR_KEY)
+    return raw ? (JSON.parse(raw) as LedgerData) : undefined
+  } catch {
+    return undefined
   }
-  state = { ...state, loaded: true }
+}
+
+function writeMirror(data: LedgerData) {
+  try {
+    localStorage.setItem(MIRROR_KEY, JSON.stringify(data))
+  } catch {
+    // 용량 초과 등 — IndexedDB가 주 저장소이므로 사본 실패는 조용히 넘긴다.
+  }
+}
+
+export function countRecords(d: Pick<LedgerData, 'transactions' | 'loans' | 'assets'>): number {
+  return (d.transactions?.length ?? 0) + (d.loans?.length ?? 0) + (d.assets?.length ?? 0)
+}
+
+/** 최신 자동 백업 */
+async function latestAutoBackup(): Promise<LedgerData | undefined> {
+  const list = await listAutoBackups()
+  return list.length ? get<LedgerData>(list[0].key) : undefined
+}
+
+export async function listAutoBackups(): Promise<{ key: string; date: string }[]> {
+  const all = (await keys()).map(String).filter((k) => k.startsWith(AUTO_BACKUP_PREFIX))
+  return all
+    .map((key) => ({ key, date: key.slice(AUTO_BACKUP_PREFIX.length) }))
+    .sort((a, b) => b.date.localeCompare(a.date))
+}
+
+export async function readAutoBackup(key: string): Promise<LedgerData | undefined> {
+  return get<LedgerData>(key)
+}
+
+/** 하루 한 번, 앱을 열 때 그날의 자동 백업을 남긴다 */
+async function writeDailyBackup(data: LedgerData) {
+  if (!countRecords(data)) return
+  const d = new Date()
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const key = AUTO_BACKUP_PREFIX + today
+  if (!(await get(key))) await set(key, data)
+  const list = await listAutoBackups()
+  for (const old of list.slice(AUTO_BACKUP_KEEP)) await del(old.key)
+}
+
+export async function loadLedger(): Promise<void> {
+  // iOS 홈 화면 앱은 처음 열 때 IndexedDB 연결이 가끔 실패한다 — 몇 번 다시 시도한다.
+  let saved: LedgerData | undefined
+  let idbFailed = false
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      saved = await get<LedgerData>(STORAGE_KEY)
+      idbFailed = false
+      break
+    } catch {
+      idbFailed = true
+      await sleep(400 * (attempt + 1))
+    }
+  }
+  const mirror = readMirror()
+
+  let chosen: LedgerData | undefined = saved
+  let recoveredFrom: string | null = null
+  // 주 저장소가 비었거나 사본이 더 최근이면 사본을 쓴다.
+  if (mirror && (!saved || (mirror.savedAt ?? 0) > (saved.savedAt ?? 0))) {
+    chosen = mirror
+    if (!saved || countRecords(mirror) > countRecords(saved)) recoveredFrom = '보조 저장소'
+  }
+  if (!chosen && !idbFailed) {
+    try {
+      const backup = await latestAutoBackup()
+      if (backup && countRecords(backup)) {
+        chosen = backup
+        recoveredFrom = '자동 백업'
+      }
+    } catch {
+      /* 자동 백업도 못 읽으면 새로 시작 */
+    }
+  }
+
+  if (idbFailed && !chosen) {
+    state = {
+      ...state,
+      loaded: true,
+      readOnly: true,
+      saveError: '저장소를 열지 못했어요. 기존 기록을 지키기 위해 지금은 저장을 막아 두었어요. 앱을 완전히 종료했다가 다시 열어 주세요.',
+    }
+    emit()
+    return
+  }
+
+  state = { ...state, data: chosen ? normalize(chosen) : state.data, loaded: true, recoveredFrom }
   emit()
+  // 되살린 경우 주 저장소에도 다시 써 두고, 보조 사본이 없으면 바로 만든다.
+  if (recoveredFrom) persist(state.data)
+  else if (chosen && !mirror) writeMirror(state.data)
+  writeDailyBackup(state.data).catch(() => {})
   // 브라우저가 공간 부족 시 데이터를 지우지 않도록 영구 저장을 요청한다.
   navigator.storage?.persist?.().catch(() => {})
 }
@@ -72,14 +178,15 @@ function normalize(raw: LedgerData): LedgerData {
     theme: raw.theme ?? 'system',
     loans: Array.isArray(raw.loans) ? raw.loans : [],
     loanPayments: Array.isArray(raw.loanPayments) ? raw.loanPayments : [],
+    savedAt: raw.savedAt,
+    lastExportAt: raw.lastExportAt,
     assets: Array.isArray(raw.assets) ? raw.assets : [],
     assetSnapshots: Array.isArray(raw.assetSnapshots) ? raw.assetSnapshots : [],
   }
 }
 
-function commit(data: LedgerData) {
-  state = { ...state, data }
-  emit()
+function persist(data: LedgerData) {
+  writeMirror(data)
   set(STORAGE_KEY, data).then(
     () => {
       if (state.saveError) {
@@ -88,10 +195,21 @@ function commit(data: LedgerData) {
       }
     },
     (e) => {
-      state = { ...state, saveError: `저장에 실패했어요: ${String(e)}` }
+      state = { ...state, saveError: `저장에 실패했어요(보조 저장소에는 저장됨): ${String(e)}` }
       emit()
     },
   )
+}
+
+function commit(next: LedgerData) {
+  if (state.readOnly) {
+    window.alert('저장소를 열지 못한 상태라 저장하지 않았어요. 앱을 완전히 종료했다가 다시 열어 주세요.')
+    return
+  }
+  const data = { ...next, savedAt: Date.now() }
+  state = { ...state, data }
+  emit()
+  persist(data)
 }
 
 export function newId(): string {
@@ -162,7 +280,18 @@ export const actions = {
   },
 
   replaceAll(data: LedgerData) {
+    // 덮어쓰기 직전 상태를 자동 백업으로 남겨 되돌릴 수 있게 한다.
+    if (countRecords(state.data)) set(`${AUTO_BACKUP_PREFIX}${new Date().toISOString().slice(0, 10)}-before-restore`, state.data).catch(() => {})
     commit(normalize(data))
+  },
+
+  markExported() {
+    commit({ ...state.data, lastExportAt: Date.now() })
+  },
+
+  dismissRecovered() {
+    state = { ...state, recoveredFrom: null }
+    emit()
   },
 
   addSample(sample: Pick<LedgerData, 'transactions' | 'loans' | 'loanPayments' | 'assets' | 'assetSnapshots'>) {
@@ -277,6 +406,7 @@ export const actions = {
   },
 
   resetAll() {
+    if (countRecords(state.data)) set(`${AUTO_BACKUP_PREFIX}${new Date().toISOString().slice(0, 10)}-before-reset`, state.data).catch(() => {})
     commit(createInitialData())
   },
 }

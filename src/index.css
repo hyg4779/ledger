@@ -1773,3 +1773,58 @@ select {
 .tab-icon {
   width: 42px;
 }
+
+/* ───────── 데이터 안전 안내 ───────── */
+
+.banner-info,
+.banner-warn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 16px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.banner-info {
+  background: var(--lime-soft);
+}
+.banner-info span,
+.banner-warn span {
+  flex: 1;
+}
+.banner-warn {
+  background: color-mix(in oklab, var(--c4) 14%, var(--surface));
+}
+.safety-list {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+}
+.safety-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--grid);
+  font-size: 14px;
+}
+.safety-list span {
+  color: var(--ink-2);
+}
+.safety-list b {
+  text-align: right;
+  word-break: break-all;
+}
+.warn-box {
+  background: color-mix(in oklab, var(--c4) 12%, var(--surface));
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+.card .hint + .field-label {
+  margin-top: 12px;
+}

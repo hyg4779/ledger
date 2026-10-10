@@ -118,4 +118,8 @@ export interface LedgerData {
   loanPayments: LoanPayment[]
   assets: Asset[]
   assetSnapshots: AssetSnapshot[]
+  /** 마지막 저장 시각 — 저장소 사본 중 더 최신을 고를 때 쓴다 */
+  savedAt?: number
+  /** 마지막으로 백업 파일을 내보낸 시각 */
+  lastExportAt?: number
 }

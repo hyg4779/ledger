@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { exportCsv, exportJson, readJsonFile } from '../lib/backup'
 import { formatNumber, formatWon, parseAmount } from '../lib/format'
 import { buildSampleData } from '../lib/sampleData'
-import { actions, isLedgerData, newId, useLedger } from '../lib/store'
+import { actions, countRecords, isLedgerData, listAutoBackups, newId, readAutoBackup, useLedger } from '../lib/store'
+import { isStandalone } from '../lib/platform'
 import type { Category, ThemeMode, TxType } from '../lib/types'
 
 export function SettingsScreen() {
@@ -98,13 +99,15 @@ export function SettingsScreen() {
         </div>
       </section>
 
+      <DataSafetyCard />
+
       <section className="card">
-        <h3>백업</h3>
+        <h3>백업 파일</h3>
         <p className="card-sub">
           데이터는 이 폰 안에만 저장돼요. 폰을 바꾸거나 앱을 지우면 사라지니 <b>한 달에 한 번</b> 백업 파일을 저장해 두세요.
         </p>
         <div className="btn-col">
-          <button type="button" className="secondary-btn" onClick={() => exportJson(data)}>
+          <button type="button" className="secondary-btn" onClick={async () => (await exportJson(data)) && actions.markExported()}>
             백업 파일 저장 (JSON)
           </button>
           <button type="button" className="secondary-btn" onClick={() => fileRef.current?.click()}>
@@ -276,5 +279,85 @@ function CategoryEditor({ category, onClose }: { category: Category; onClose: ()
         )}
       </div>
     </div>
+  )
+}
+
+/** 데이터가 어디에 어떻게 저장되는지, 자동 백업과 복원 */
+function DataSafetyCard() {
+  const { data } = useLedger()
+  const [persisted, setPersisted] = useState<boolean | null>(null)
+  const [backups, setBackups] = useState<{ key: string; date: string; count: number }[]>([])
+
+  useEffect(() => {
+    navigator.storage?.persisted?.().then(setPersisted, () => setPersisted(null))
+    listAutoBackups()
+      .then(async (list) =>
+        Promise.all(list.map(async (b) => ({ ...b, count: countRecords((await readAutoBackup(b.key)) ?? { transactions: [], loans: [], assets: [] }) }))),
+      )
+      .then(setBackups, () => setBackups([]))
+  }, [data.savedAt])
+
+  async function restore(key: string, label: string) {
+    const backup = await readAutoBackup(key)
+    if (!backup) return
+    if (!window.confirm(`${label} 자동 백업으로 되돌릴까요?
+지금 상태는 따로 자동 백업으로 남겨 둘게요.`)) return
+    actions.replaceAll(backup)
+  }
+
+  const lastExport = data.lastExportAt ? Math.floor((Date.now() - data.lastExportAt) / 86_400_000) : null
+
+  return (
+    <section className="card">
+      <h3>데이터 안전</h3>
+      <ul className="safety-list">
+        <li>
+          <span>저장 위치</span>
+          <b>이 기기 · {location.host}</b>
+        </li>
+        <li>
+          <span>실행 방식</span>
+          <b>{isStandalone() ? '홈 화면 앱 ✓' : '브라우저 탭 ⚠️'}</b>
+        </li>
+        <li>
+          <span>삭제 방지 요청</span>
+          <b>{persisted === null ? '확인 불가' : persisted ? '허용됨 ✓' : '허용 안 됨'}</b>
+        </li>
+        <li>
+          <span>마지막 백업 파일</span>
+          <b>{lastExport === null ? '없음 ⚠️' : lastExport === 0 ? '오늘' : `${lastExport}일 전${lastExport > 30 ? ' ⚠️' : ''}`}</b>
+        </li>
+      </ul>
+      {!isStandalone() && (
+        <p className="hint warn-box">
+          지금은 브라우저 탭에서 열려 있어요. 아이폰은 <b>Safari 탭과 홈 화면 앱의 저장 공간이 서로 달라서</b>, 한쪽에 적은 기록이 다른 쪽에는 보이지
+          않아요. 또 Safari 탭은 한동안 안 쓰면 기록이 지워질 수 있으니 홈 화면 앱으로 써 주세요.
+        </p>
+      )}
+      <p className="hint">
+        기록은 이 주소({location.host})에 묶여 저장돼요. 앱 업데이트(배포)로는 지워지지 않지만, <b>주소가 바뀌면 새 주소에서는 보이지 않아요.</b>{' '}
+        두 군데(기본 + 보조)에 저장하고, 앱을 연 날마다 기기 안에 자동 백업을 {14}일치 남겨요.
+      </p>
+
+      <div className="field-label">자동 백업 (기기 안)</div>
+      {backups.length === 0 ? (
+        <p className="empty-small">아직 없어요 — 기록이 생기면 내일부터 쌓여요</p>
+      ) : (
+        <ul className="pay-history">
+          {backups.map((b) => {
+            const label = b.date.replace(/-before-restore$/, ' (복원 직전)').replace(/-before-reset$/, ' (전체 삭제 직전)')
+            return (
+              <li key={b.key}>
+                <span className="pay-date">{label}</span>
+                <span className="pay-amts">{b.count}건</span>
+                <button type="button" className="mini-btn ghost" onClick={() => restore(b.key, label)}>
+                  복원
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
   )
 }

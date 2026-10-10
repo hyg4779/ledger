@@ -5,16 +5,16 @@ import type { LedgerData } from './types'
  * 파일을 내보낸다. iOS 홈 화면 앱에서는 <a download>가 동작하지 않는 경우가 있어
  * 가능하면 공유 시트(파일 앱에 저장, 카톡·메일 전송 등)를 쓰고, 안 되면 다운로드로 대신한다.
  */
-async function shareOrDownload(filename: string, mime: string, content: string) {
+async function shareOrDownload(filename: string, mime: string, content: string): Promise<boolean> {
   const blob = new Blob([content], { type: mime })
   const file = new File([blob], filename, { type: mime })
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: filename })
-      return
+      return true
     } catch (e) {
       // 사용자가 공유 시트를 닫은 경우는 그대로 끝낸다.
-      if ((e as DOMException).name === 'AbortError') return
+      if ((e as DOMException).name === 'AbortError') return false
     }
   }
   const url = URL.createObjectURL(blob)
@@ -25,6 +25,7 @@ async function shareOrDownload(filename: string, mime: string, content: string) 
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  return true
 }
 
 export function exportJson(data: LedgerData) {

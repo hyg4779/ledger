@@ -9,7 +9,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 새 버전을 몰래 바로 적용하지 않고, 안내 띠에서 사용자가 눌렀을 때 적용한다
+      // (입력 중에 화면이 새로고침되어 적던 내용이 날아가지 않도록).
+      registerType: 'prompt',
       includeAssets: ['apple-touch-icon.png', 'favicon-32.png'],
       manifest: {
         name: '자산 가계부',
