@@ -6,6 +6,7 @@ import { MonthNav } from '../components/MonthNav'
 import { currentMonthKey, daysInMonth, dayLabel, monthLabel, parseMonthKey, shiftMonth, type MonthKey } from '../lib/dates'
 import { formatNumber, formatPercent, formatWon } from '../lib/format'
 import { buildSampleData } from '../lib/sampleData'
+import { netWorthNow } from '../lib/assets'
 import { currentBalance, daysToMaturity, expectedPayment, LOAN_KINDS } from '../lib/loans'
 import { byCategory, cumulativeDailyExpense, inMonth, savingsRate, totals } from '../lib/stats'
 import { actions, useLedger } from '../lib/store'
@@ -22,10 +23,11 @@ interface Props {
   onOpenRecords: () => void
   onOpenSettings: () => void
   onOpenLoans: () => void
+  onOpenAssets: () => void
   onEdit: (tx: Transaction) => void
 }
 
-export function HomeScreen({ month, onMonthChange, onShowCategory, onOpenRecords, onOpenSettings, onOpenLoans, onEdit }: Props) {
+export function HomeScreen({ month, onMonthChange, onShowCategory, onOpenRecords, onOpenSettings, onOpenLoans, onOpenAssets, onEdit }: Props) {
   const { data } = useLedger()
   const [activeSlice, setActiveSlice] = useState<string | null>(null)
   const [donutRef, donutWidth] = useWidth<HTMLDivElement>()
@@ -185,7 +187,7 @@ export function HomeScreen({ month, onMonthChange, onShowCategory, onOpenRecords
 
       <BudgetCard spent={sum.expense} budget={data.monthlyBudget} month={month} onSetBudget={onOpenSettings} />
 
-      <LoanSummaryCard onOpen={onOpenLoans} />
+      <NetWorthCard onOpenAssets={onOpenAssets} onOpenLoans={onOpenLoans} />
 
       <section className="card">
         <div className="eyebrow">CASH FLOW</div>
@@ -316,38 +318,39 @@ function BudgetCard({ spent, budget, month, onSetBudget }: { spent: number; budg
   )
 }
 
-/** 홈의 대출 요약 — 총 잔액, 이번 달 예상 이자, 가장 가까운 만기 */
-function LoanSummaryCard({ onOpen }: { onOpen: () => void }) {
+/** 홈의 순자산 요약 — 총자산, 대출, 순자산과 가장 가까운 대출 만기 */
+function NetWorthCard({ onOpenAssets, onOpenLoans }: { onOpenAssets: () => void; onOpenLoans: () => void }) {
   const { data } = useLedger()
   const loans = data.loans.filter((l) => !l.closed)
-  if (!loans.length) return null
-  const rows = loans.map((loan) => {
-    const balance = currentBalance(loan, data.loanPayments)
-    return { loan, balance, interest: expectedPayment(loan, balance).interest, days: daysToMaturity(loan) }
-  })
-  const total = rows.reduce((a, r) => a + r.balance, 0)
-  const interest = rows.reduce((a, r) => a + r.interest, 0)
-  const nearest = [...rows].filter((r) => r.days >= 0).sort((a, b) => a.days - b.days)[0]
+  const hasAssets = data.assets.some((a) => !a.closed)
+  if (!loans.length && !hasAssets) return null
+  const { assets, debts, net } = netWorthNow(data)
+  const nearest = loans
+    .map((loan) => ({ loan, days: daysToMaturity(loan) }))
+    .filter((r) => r.days >= 0)
+    .sort((a, b) => a.days - b.days)[0]
+  const interest = loans.reduce((a, l) => a + expectedPayment(l, currentBalance(l, data.loanPayments)).interest, 0)
   return (
     <section className="card">
       <div className="card-top">
         <div>
-          <div className="eyebrow">LOANS</div>
-          <h2 className="card-title">대출 잔액</h2>
+          <div className="eyebrow">NET WORTH</div>
+          <h2 className="card-title">순자산</h2>
         </div>
-        <button type="button" className="tag link" onClick={onOpen}>
-          자세히 ›
+        <button type="button" className="tag link" onClick={onOpenAssets}>
+          자산 ›
         </button>
       </div>
-      <div className="flow-grid">
-        <div>
-          <span className="label">총 잔액</span>
-          <b>{formatWon(total)}</b>
-        </div>
-        <div>
-          <span className="label">이번 달 예상 이자</span>
-          <b>{formatWon(interest)}</b>
-        </div>
+      <strong className={net < 0 ? 'net-big neg' : 'net-big'}>{formatWon(net)}</strong>
+      <div className="flow-grid" style={{ marginTop: 12 }}>
+        <button type="button" className="flow-cell" onClick={onOpenAssets}>
+          <span className="label">총자산</span>
+          <b>{formatWon(assets)}</b>
+        </button>
+        <button type="button" className="flow-cell" onClick={onOpenLoans}>
+          <span className="label">대출 · 이달 예상 이자 {formatWon(interest)}</span>
+          <b>−{formatWon(debts)}</b>
+        </button>
       </div>
       {nearest && (
         <p className={nearest.days <= 365 ? 'flow-caption warn' : 'flow-caption'}>

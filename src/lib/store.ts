@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { get, set } from 'idb-keyval'
 import { createInitialData, DEFAULT_CATEGORIES } from './defaults'
 import { LOAN_INTEREST_CATEGORY } from './loans'
-import type { Category, LedgerData, Loan, LoanPayment, ThemeMode, Transaction } from './types'
+import type { Asset, AssetSnapshot, Category, LedgerData, Loan, LoanPayment, ThemeMode, Transaction } from './types'
 
 const STORAGE_KEY = 'ledger-data-v1'
 
@@ -56,14 +56,24 @@ function normalize(raw: LedgerData): LedgerData {
   const missing = DEFAULT_CATEGORIES.filter(
     (c) => !known.has(c.id) && transactions.some((t) => t.categoryId === c.id),
   ).map((c) => ({ ...c, hidden: true }))
+  let merged = [...categories, ...missing]
+  // 구독 카테고리가 생기기 전 데이터: '통신·구독'을 '통신'으로 바꾸고 바로 뒤에 '구독'을 끼워 넣는다.
+  if (!merged.some((c) => c.id === 'exp-subscription')) {
+    merged = merged.map((c) => (c.id === 'exp-telecom' && c.name === '통신·구독' ? { ...c, name: '통신' } : c))
+    const sub = DEFAULT_CATEGORIES.find((c) => c.id === 'exp-subscription')!
+    const at = merged.findIndex((c) => c.id === 'exp-telecom')
+    merged.splice(at >= 0 ? at + 1 : merged.length, 0, { ...sub })
+  }
   return {
     version: 1,
-    categories: [...categories, ...missing],
+    categories: merged,
     transactions,
     monthlyBudget: raw.monthlyBudget,
     theme: raw.theme ?? 'system',
     loans: Array.isArray(raw.loans) ? raw.loans : [],
     loanPayments: Array.isArray(raw.loanPayments) ? raw.loanPayments : [],
+    assets: Array.isArray(raw.assets) ? raw.assets : [],
+    assetSnapshots: Array.isArray(raw.assetSnapshots) ? raw.assetSnapshots : [],
   }
 }
 
@@ -155,14 +165,53 @@ export const actions = {
     commit(normalize(data))
   },
 
-  addSample(sample: { transactions: Transaction[]; loans: Loan[]; loanPayments: LoanPayment[] }) {
+  addSample(sample: Pick<LedgerData, 'transactions' | 'loans' | 'loanPayments' | 'assets' | 'assetSnapshots'>) {
     const d = state.data
     commit({
       ...d,
       transactions: [...d.transactions, ...sample.transactions],
       loans: [...d.loans, ...sample.loans],
       loanPayments: [...d.loanPayments, ...sample.loanPayments],
+      assets: [...d.assets, ...sample.assets],
+      assetSnapshots: [...d.assetSnapshots, ...sample.assetSnapshots],
     })
+  },
+
+  /** 잔액을 직접 고친다. 이력을 남기도록 차이만큼 조정 기록을 추가한다. */
+  adjustLoanBalance(loanId: string, newBalance: number, currentBalance: number, date: string) {
+    const diff = currentBalance - newBalance
+    if (diff === 0) return
+    const d = state.data
+    const adj: LoanPayment = { id: newId(), loanId, date, principal: diff, kind: 'adjust', createdAt: Date.now() }
+    commit({ ...d, loanPayments: [...d.loanPayments, adj] })
+  },
+
+  saveAsset(asset: Asset) {
+    const d = state.data
+    const exists = d.assets.some((a) => a.id === asset.id)
+    commit({ ...d, assets: exists ? d.assets.map((a) => (a.id === asset.id ? asset : a)) : [...d.assets, asset] })
+  },
+
+  deleteAsset(id: string) {
+    const d = state.data
+    commit({ ...d, assets: d.assets.filter((a) => a.id !== id), assetSnapshots: d.assetSnapshots.filter((s) => s.assetId !== id) })
+  },
+
+  /** 평가금액 기록. 같은 자산·같은 날짜 기록이 있으면 덮어쓴다(하루에 여러 번 고쳐도 하나만 남게). */
+  saveSnapshots(entries: Omit<AssetSnapshot, 'id' | 'createdAt'>[]) {
+    const d = state.data
+    const now = Date.now()
+    let snaps = d.assetSnapshots
+    for (const e of entries) {
+      snaps = snaps.filter((s) => !(s.assetId === e.assetId && s.date === e.date))
+      snaps = [...snaps, { ...e, id: newId(), createdAt: now }]
+    }
+    commit({ ...d, assetSnapshots: snaps })
+  },
+
+  deleteSnapshot(id: string) {
+    const d = state.data
+    commit({ ...d, assetSnapshots: d.assetSnapshots.filter((s) => s.id !== id) })
   },
 
   saveLoan(loan: Loan) {
@@ -183,7 +232,7 @@ export const actions = {
   },
 
   /** 납부 1회 기록: 이자는 '대출이자' 지출로, 원금은 상환 기록으로 남긴다. */
-  recordLoanPayment(input: { loan: Loan; date: string; interest: number; principal: number; memo: string }) {
+  recordLoanPayment(input: { loan: Loan; date: string; interest: number; principal: number; memo: string; kind?: 'payment' | 'adjust' }) {
     const d = state.data
     const now = Date.now()
     const tx: Transaction | null =
@@ -205,6 +254,7 @@ export const actions = {
       date: input.date,
       principal: input.principal,
       interestTxId: tx?.id,
+      kind: input.kind,
       createdAt: now,
     }
     commit({

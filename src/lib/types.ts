@@ -25,7 +25,7 @@ export interface Transaction {
   loanId?: string
 }
 
-export type LoanKind = 'jeonse' | 'mortgage' | 'credit' | 'invest' | 'car' | 'student' | 'etc'
+export type LoanKind = 'jeonse' | 'mortgage' | 'credit' | 'overdraft' | 'invest' | 'car' | 'student' | 'etc'
 
 /** 만기일시(이자만 내다 만기에 원금) / 원리금균등 / 원금균등 */
 export type RepaymentType = 'bullet' | 'equalPayment' | 'equalPrincipal'
@@ -35,7 +35,7 @@ export interface Loan {
   name: string
   kind: LoanKind
   lender: string
-  /** 최초 대출금(원) */
+  /** 최초 대출금(원). 마이너스통장은 한도 */
   principal: number
   /** 이 앱에 등록할 때의 잔액(원). 현재 잔액 = 이 값 − 이후 원금 상환 합계 */
   openingBalance: number
@@ -60,9 +60,48 @@ export interface LoanPayment {
   loanId: string
   /** YYYY-MM-DD */
   date: string
-  /** 원금 상환액(원). 지출이 아니라 빚이 줄어든 것이므로 지출 통계에 넣지 않는다. */
+  /**
+   * 잔액 감소액(원). 원금 상환이면 양수, 마이너스통장 추가 사용처럼 잔액이 늘면 음수.
+   * 지출이 아니라 빚이 변한 것이므로 지출 통계에 넣지 않는다.
+   */
   principal: number
   interestTxId?: string
+  /** 'adjust'는 납부가 아니라 잔액을 직접 고친 기록 (월별 잔액 그래프의 이력을 지키기 위해 남긴다) */
+  kind?: 'payment' | 'adjust'
+  createdAt: number
+}
+
+export type AssetType =
+  | 'domesticStock'
+  | 'overseasStock'
+  | 'crypto'
+  | 'deposit'
+  | 'cash'
+  | 'pension'
+  | 'housingDeposit'
+  | 'realEstate'
+  | 'etc'
+
+/** 자산 계좌·보유분 하나. 가치는 그때그때 평가금액 스냅숏으로만 남긴다. */
+export interface Asset {
+  id: string
+  name: string
+  type: AssetType
+  memo: string
+  /** 정리(매도·해지)한 자산 — 합계에서 빠지고 과거 그래프에만 남는다 */
+  closed?: boolean
+  createdAt: number
+}
+
+/** 어느 날의 평가금액. 그 다음 스냅숏 전까지 이 값이 유지된다고 본다. */
+export interface AssetSnapshot {
+  id: string
+  assetId: string
+  /** YYYY-MM-DD */
+  date: string
+  value: number
+  /** 그 시점까지 넣은 원금(선택) — 있으면 수익률을 계산한다 */
+  principal?: number
   createdAt: number
 }
 
@@ -77,4 +116,6 @@ export interface LedgerData {
   theme: ThemeMode
   loans: Loan[]
   loanPayments: LoanPayment[]
+  assets: Asset[]
+  assetSnapshots: AssetSnapshot[]
 }

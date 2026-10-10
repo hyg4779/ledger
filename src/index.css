@@ -1656,3 +1656,120 @@ select {
 .tab-icon {
   width: 48px;
 }
+
+/* ───────── 자산 ───────── */
+
+.lime-row.link-row {
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+}
+.net-big {
+  display: block;
+  margin-top: 14px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.flow-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.flow-cell .label {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.flow-cell b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.asset-group header {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 6px 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.asset-amt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.ret {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ret.up {
+  color: var(--good-text);
+}
+.ret.down {
+  color: var(--neg-text);
+}
+.tx-cat.stale {
+  color: var(--neg-text);
+}
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.bulk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bulk-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--grid);
+}
+.bulk-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bulk-list input {
+  width: 46%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--grid);
+  background: var(--surface);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bulk-total {
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+}
+.muted {
+  color: var(--muted);
+}
+.loan-fill.used {
+  background: var(--c1);
+}
+
+/* 하단 탭 6개 */
+.tabbar button {
+  max-width: 96px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.tab-icon {
+  width: 42px;
+}

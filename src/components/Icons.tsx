@@ -31,6 +31,13 @@ export const RecordIcon = () => (
   </Svg>
 )
 
+export const AssetIcon = () => (
+  <Svg>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 4v8l5.7 5.7" />
+  </Svg>
+)
+
 export const LoanIcon = () => (
   <Svg>
     <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />

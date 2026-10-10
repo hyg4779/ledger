@@ -6,6 +6,7 @@ export const LOAN_KINDS: Record<LoanKind, { label: string; emoji: string }> = {
   jeonse: { label: '전세자금대출', emoji: '🏠' },
   mortgage: { label: '주택담보대출', emoji: '🏡' },
   credit: { label: '신용대출', emoji: '💳' },
+  overdraft: { label: '마이너스통장', emoji: '➖' },
   invest: { label: '투자용 대출', emoji: '📈' },
   car: { label: '자동차 대출', emoji: '🚗' },
   student: { label: '학자금 대출', emoji: '🎓' },
@@ -57,6 +58,8 @@ export function expectedPayment(loan: Loan, balance: number, from = new Date()):
   const r = loan.rate / 100 / 12
   const interest = Math.round(balance * r)
   const n = remainingMonths(loan, from)
+  // 마이너스통장은 쓴 금액에 이자만 붙고 정해진 원금 상환이 없다.
+  if (loan.kind === 'overdraft') return { interest, principal: 0 }
   if (loan.repayment === 'bullet') return { interest, principal: n === 1 ? balance : 0 }
   if (loan.repayment === 'equalPrincipal') return { interest, principal: Math.round(balance / n) }
   // 원리금균등: 남은 잔액·기간으로 매달 같은 금액 M을 다시 계산
@@ -83,4 +86,33 @@ export function activeLoans(data: LedgerData): Loan[] {
 export function weightedRate(loans: { loan: Loan; balance: number }[]): number {
   const total = loans.reduce((a, l) => a + l.balance, 0)
   return total ? loans.reduce((a, l) => a + l.loan.rate * l.balance, 0) / total : NaN
+}
+
+/** 특정 날짜(포함) 기준 잔액. 시작일 전이면 0 */
+export function balanceAt(loan: Loan, payments: LoanPayment[], dateKey: string): number {
+  if (dateKey < loan.startDate) return 0
+  const changed = payments.reduce((a, p) => (p.loanId === loan.id && p.date <= dateKey ? a + p.principal : a), 0)
+  return Math.max(0, loan.openingBalance - changed)
+}
+
+/**
+ * 월말 기준 대출별 잔액 이력. 가장 이른 시작일·기록 중 늦은 쪽부터 이번 달까지(최대 maxMonths개월).
+ * values[월][대출] 형태로 돌려준다.
+ */
+export function monthlyLoanBalances(loans: Loan[], payments: LoanPayment[], maxMonths = 24) {
+  const now = new Date()
+  const months: string[] = []
+  for (let i = maxMonths - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+  }
+  const monthEnd = (m: string) => {
+    const [y, mo] = m.split('-').map(Number)
+    const last = new Date(y, mo, 0).getDate()
+    return `${m}-${String(last).padStart(2, '0')}`
+  }
+  const rows = months.map((m) => loans.map((l) => balanceAt(l, payments, monthEnd(m))))
+  // 앞쪽의 '전부 0'인 달은 잘라낸다.
+  const first = rows.findIndex((r) => r.some((v) => v > 0))
+  return first < 0 ? { months: [], values: [] } : { months: months.slice(first), values: rows.slice(first) }
 }

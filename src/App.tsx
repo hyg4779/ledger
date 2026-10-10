@@ -1,18 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ChartIcon, HomeIcon, LoanIcon, PlusIcon, RecordIcon, SettingsIcon } from './components/Icons'
+import { AssetSheet, AssetValueSheet, BulkAssetSheet } from './components/AssetSheets'
+import { AssetIcon, ChartIcon, HomeIcon, LoanIcon, PlusIcon, RecordIcon, SettingsIcon } from './components/Icons'
 import { LoanPaymentSheet } from './components/LoanPaymentSheet'
 import { LoanSheet } from './components/LoanSheet'
 import { TransactionSheet } from './components/TransactionSheet'
 import { currentMonthKey, todayKey, type MonthKey } from './lib/dates'
 import { loadLedger, useLedger } from './lib/store'
-import type { Loan, Transaction } from './lib/types'
+import type { Asset, Loan, Transaction } from './lib/types'
+import { AssetsScreen } from './screens/AssetsScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { LoansScreen } from './screens/LoansScreen'
 import { RecordsScreen } from './screens/RecordsScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { StatsScreen } from './screens/StatsScreen'
 
-type Tab = 'home' | 'records' | 'loans' | 'stats' | 'settings'
+type Tab = 'home' | 'records' | 'assets' | 'loans' | 'stats' | 'settings'
 
 /** 열려 있는 입력 시트 */
 type SheetState =
@@ -21,10 +23,14 @@ type SheetState =
   | { mode: 'edit'; tx: Transaction }
   | { mode: 'loan'; loan: Loan | null }
   | { mode: 'loanPayment'; loan: Loan }
+  | { mode: 'asset'; asset: Asset | null }
+  | { mode: 'assetValue'; asset: Asset }
+  | { mode: 'assetBulk' }
 
 const TABS: [Tab, ReactNode, string][] = [
   ['home', <HomeIcon />, '홈'],
   ['records', <RecordIcon />, '기록'],
+  ['assets', <AssetIcon />, '자산'],
   ['loans', <LoanIcon />, '대출·이자'],
   ['stats', <ChartIcon />, '분석'],
   ['settings', <SettingsIcon />, '설정'],
@@ -77,6 +83,7 @@ export default function App() {
             }}
             onOpenSettings={() => setTab('settings')}
             onOpenLoans={() => setTab('loans')}
+            onOpenAssets={() => setTab('assets')}
             onEdit={openEdit}
           />
         )}
@@ -87,6 +94,14 @@ export default function App() {
             onEdit={openEdit}
             categoryFilter={categoryFilter}
             onClearFilter={() => setCategoryFilter(null)}
+          />
+        )}
+        {tab === 'assets' && (
+          <AssetsScreen
+            onAddAsset={() => setSheet({ mode: 'asset', asset: null })}
+            onOpenAsset={(asset) => setSheet({ mode: 'assetValue', asset })}
+            onBulkUpdate={() => setSheet({ mode: 'assetBulk' })}
+            onOpenLoans={() => setTab('loans')}
           />
         )}
         {tab === 'loans' && (
@@ -128,6 +143,16 @@ export default function App() {
       </nav>
 
       {sheet.mode === 'loan' && <LoanSheet key={sheet.loan?.id ?? 'new-loan'} editing={sheet.loan} onClose={() => setSheet({ mode: 'closed' })} />}
+      {sheet.mode === 'asset' && <AssetSheet key={sheet.asset?.id ?? 'new-asset'} editing={sheet.asset} onClose={() => setSheet({ mode: 'closed' })} />}
+      {sheet.mode === 'assetValue' && (
+        <AssetValueSheet
+          key={sheet.asset.id}
+          asset={sheet.asset}
+          onClose={() => setSheet({ mode: 'closed' })}
+          onEditInfo={() => setSheet({ mode: 'asset', asset: sheet.asset })}
+        />
+      )}
+      {sheet.mode === 'assetBulk' && <BulkAssetSheet onClose={() => setSheet({ mode: 'closed' })} />}
       {sheet.mode === 'loanPayment' && <LoanPaymentSheet loan={sheet.loan} onClose={() => setSheet({ mode: 'closed' })} />}
       {(sheet.mode === 'new' || sheet.mode === 'edit') && (
         <TransactionSheet

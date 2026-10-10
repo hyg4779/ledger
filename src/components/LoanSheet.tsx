@@ -18,8 +18,8 @@ export function LoanSheet({ editing, onClose }: Props) {
   const [lender, setLender] = useState(editing?.lender ?? '')
   const [principalText, setPrincipalText] = useState(editing ? formatNumber(editing.principal) : '')
   const repaid = editing ? repaidPrincipal(editing.id, data.loanPayments) : 0
-  // 화면에는 '현재 잔액'을 보여주고, 저장할 때 등록 시점 잔액으로 되돌려 계산한다.
-  const [balanceText, setBalanceText] = useState(editing ? formatNumber(Math.max(0, editing.openingBalance - repaid)) : '')
+  const editingBalance = editing ? Math.max(0, editing.openingBalance - repaid) : 0
+  const [balanceText, setBalanceText] = useState(editing ? formatNumber(editingBalance) : '')
   const [rateText, setRateText] = useState(editing ? String(editing.rate) : '')
   const [repayment, setRepayment] = useState<RepaymentType>(editing?.repayment ?? 'bullet')
   const [startDate, setStartDate] = useState(editing?.startDate ?? todayKey())
@@ -28,6 +28,7 @@ export function LoanSheet({ editing, onClose }: Props) {
   const [memo, setMemo] = useState(editing?.memo ?? '')
   const [closed, setClosed] = useState(!!editing?.closed)
   const [error, setError] = useState('')
+  const isOverdraft = kind === 'overdraft'
 
   const amountInput = (value: string, set: (v: string) => void) => ({
     inputMode: 'numeric' as const,
@@ -42,11 +43,12 @@ export function LoanSheet({ editing, onClose }: Props) {
 
   function save() {
     const principal = parseAmount(principalText)
-    const balance = balanceText ? parseAmount(balanceText) : principal
+    // 마이너스통장은 비워 두면 아직 안 쓴 것(0원), 일반 대출은 대출금 전액
+    const balance = balanceText ? parseAmount(balanceText) : isOverdraft ? 0 : principal
     const rate = Number(rateText.replace(',', '.'))
     const paymentDay = Math.min(31, Math.max(1, Math.round(Number(paymentDayText) || 1)))
-    if (principal <= 0) return setError('대출금액을 입력해 주세요')
-    if (balance > principal) return setError('현재 잔액이 대출금액보다 클 수 없어요')
+    if (principal <= 0) return setError(isOverdraft ? '한도를 입력해 주세요' : '대출금액을 입력해 주세요')
+    if (balance > principal) return setError(isOverdraft ? '사용액이 한도보다 클 수 없어요' : '현재 잔액이 대출금액보다 클 수 없어요')
     if (!Number.isFinite(rate) || rate < 0 || rate > 30) return setError('금리를 확인해 주세요 (예: 3.85)')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(maturityDate)) return setError('만기일을 입력해 주세요')
     if (maturityDate <= startDate) return setError('만기일은 시작일보다 뒤여야 해요')
@@ -56,9 +58,11 @@ export function LoanSheet({ editing, onClose }: Props) {
       kind,
       lender: lender.trim(),
       principal,
-      openingBalance: balance + repaid,
+      // 새 대출은 입력한 잔액에서 시작. 수정할 때는 시작 잔액을 그대로 두고 아래에서 조정 기록을 남겨
+      // 월별 잔액 그래프의 과거 값이 바뀌지 않게 한다.
+      openingBalance: editing ? editing.openingBalance : balance,
       rate,
-      repayment,
+      repayment: isOverdraft ? 'bullet' : repayment,
       startDate,
       maturityDate,
       paymentDay,
@@ -66,6 +70,7 @@ export function LoanSheet({ editing, onClose }: Props) {
       closed: closed || undefined,
       createdAt: editing?.createdAt ?? Date.now(),
     })
+    if (editing && balance !== editingBalance) actions.adjustLoanBalance(editing.id, balance, editingBalance, todayKey())
     onClose()
   }
 
@@ -114,12 +119,12 @@ export function LoanSheet({ editing, onClose }: Props) {
 
         <div className="two-col">
           <label className="field">
-            <span className="field-label">대출금액 (원)</span>
+            <span className="field-label">{isOverdraft ? '한도 (원)' : '대출금액 (원)'}</span>
             <input {...amountInput(principalText, setPrincipalText)} />
           </label>
           <label className="field">
-            <span className="field-label">현재 잔액 (원)</span>
-            <input {...amountInput(balanceText, setBalanceText)} placeholder="비우면 대출금액" />
+            <span className="field-label">{isOverdraft ? '현재 사용액 (원)' : '현재 잔액 (원)'}</span>
+            <input {...amountInput(balanceText, setBalanceText)} placeholder={isOverdraft ? '0' : '비우면 대출금액'} />
           </label>
         </div>
 
@@ -148,20 +153,26 @@ export function LoanSheet({ editing, onClose }: Props) {
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </label>
           <label className="field">
-            <span className="field-label">만기일</span>
+            <span className="field-label">{isOverdraft ? '만기(연장)일' : '만기일'}</span>
             <input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
           </label>
         </div>
 
-        <div className="field-label">상환 방식</div>
-        <div className="segmented">
-          {(Object.keys(REPAYMENT_LABELS) as RepaymentType[]).map((r) => (
-            <button key={r} type="button" className={r === repayment ? 'on' : ''} onClick={() => setRepayment(r)}>
-              {REPAYMENT_LABELS[r].replace('상환', '')}
-            </button>
-          ))}
-        </div>
-        <p className="hint">{REPAYMENT_HINTS[repayment]}</p>
+        {isOverdraft ? (
+          <p className="hint">마이너스통장은 쓴 금액에만 이자가 붙어요. 사용액이 바뀌면 납부 기록이나 수정에서 현재 사용액을 고쳐 주세요.</p>
+        ) : (
+          <>
+            <div className="field-label">상환 방식</div>
+            <div className="segmented">
+              {(Object.keys(REPAYMENT_LABELS) as RepaymentType[]).map((r) => (
+                <button key={r} type="button" className={r === repayment ? 'on' : ''} onClick={() => setRepayment(r)}>
+                  {REPAYMENT_LABELS[r].replace('상환', '')}
+                </button>
+              ))}
+            </div>
+            <p className="hint">{REPAYMENT_HINTS[repayment]}</p>
+          </>
+        )}
 
         <label className="field">
           <span className="field-label">메모</span>

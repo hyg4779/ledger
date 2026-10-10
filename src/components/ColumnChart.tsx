@@ -22,17 +22,19 @@ interface Props {
   tooltipExtra?: (index: number) => string | null
   /** 이미 선택된(툴팁이 뜬) 막대를 한 번 더 눌렀을 때. 마우스는 호버로 선택되므로 한 번 클릭이면 된다. */
   onSelect?: (index: number) => void
+  /** 계열을 옆으로 나란히 대신 위로 쌓는다 (양수만). 툴팁에 합계가 붙는다. */
+  stacked?: boolean
 }
 
 const MARGIN = { top: 12, right: 4, bottom: 22, left: 40 }
 const GAP = 2
 
-export function ColumnChart({ labels, series, values, height = 200, tooltipTitle, tooltipExtra, onSelect }: Props) {
+export function ColumnChart({ labels, series, values, height = 200, tooltipTitle, tooltipExtra, onSelect, stacked }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const [active, setActive] = useState<number | null>(null)
   const activeAtDown = useRef<number | null>(null)
 
-  const flat = values.flat()
+  const flat = stacked ? values.map((g) => g.reduce((a, v) => a + Math.max(0, v), 0)) : values.flat()
   const ticks = niceTicks(Math.min(0, ...flat), Math.max(0, ...flat))
   const yMin = ticks[0]
   const yMax = ticks[ticks.length - 1]
@@ -40,11 +42,11 @@ export function ColumnChart({ labels, series, values, height = 200, tooltipTitle
   const plotH = height - MARGIN.top - MARGIN.bottom
   const y = (v: number) => MARGIN.top + ((yMax - v) / (yMax - yMin)) * plotH
   const slot = labels.length ? plotW / labels.length : 0
-  const k = series.length
+  const k = stacked ? 1 : series.length
   const barW = Math.max(2, Math.min(24, (slot * 0.72 - GAP * (k - 1)) / k))
   const groupW = barW * k + GAP * (k - 1)
-  // 좁은 화면에서 12개월 라벨이 겹치지 않게 솎아낸다.
-  const labelEvery = slot < 22 ? 2 : 1
+  // 좁은 화면에서 라벨이 겹치지 않게 솎아낸다.
+  const labelEvery = Math.max(1, Math.ceil(24 / Math.max(slot, 1)))
 
   function indexAt(e: PointerEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -88,7 +90,33 @@ export function ColumnChart({ labels, series, values, height = 200, tooltipTitle
           {active !== null && (
             <rect className="hover-band" x={MARGIN.left + slot * active} y={MARGIN.top} width={slot} height={plotH} />
           )}
-          {values.map((group, gi) => {
+          {stacked &&
+            values.map((group, gi) => {
+              const x0 = MARGIN.left + slot * gi + (slot - groupW) / 2
+              const topIndex = group.reduce((last, v, i) => (v > 0 ? i : last), -1)
+              let base = 0
+              return group.map((v, si) => {
+                if (v <= 0) return null
+                const from = base
+                base += v
+                // 맨 위 조각만 끝을 둥글리고, 조각 사이는 2px 틈으로 구분한다.
+                const yTop = y(base)
+                const yBottom = y(from) - (si === 0 || from === 0 ? 0 : GAP)
+                const d =
+                  si === topIndex
+                    ? barPath(x0, barW, yBottom, yTop)
+                    : `M${x0},${yBottom}V${yTop}H${x0 + barW}V${yBottom}Z`
+                return (
+                  <path
+                    key={`${gi}-${si}`}
+                    d={d}
+                    fill={series[si].color}
+                    opacity={active === null || active === gi ? 1 : 0.45}
+                  />
+                )
+              })
+            })}
+          {!stacked && values.map((group, gi) => {
             const x0 = MARGIN.left + slot * gi + (slot - groupW) / 2
             return group.map((v, si) => {
               const s = series[si]
@@ -132,6 +160,11 @@ export function ColumnChart({ labels, series, values, height = 200, tooltipTitle
               <b>{formatWon(values[active][si])}</b>
             </div>
           ))}
+          {stacked && series.length > 1 && (
+            <div className="tooltip-extra">
+              합계 <b>{formatWon(values[active].reduce((a, v) => a + v, 0))}</b>
+            </div>
+          )}
           {tooltipExtra?.(active) && <div className="tooltip-extra">{tooltipExtra(active)}</div>}
         </div>
       )}

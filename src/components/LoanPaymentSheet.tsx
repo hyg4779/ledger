@@ -24,7 +24,11 @@ export function LoanPaymentSheet({ loan, onClose }: Props) {
   const expected = expectedPayment(loan, balance)
   const [date, setDate] = useState(defaultPaymentDate(loan))
   const [interestText, setInterestText] = useState(expected.interest ? formatNumber(expected.interest) : '')
-  const [principalText, setPrincipalText] = useState(expected.principal ? formatNumber(expected.principal) : '')
+  const isOverdraft = loan.kind === 'overdraft'
+  // 마이너스통장은 '원금 상환' 대신 지금 사용액을 적게 한다(늘었을 수도 줄었을 수도 있으니).
+  const [principalText, setPrincipalText] = useState(
+    isOverdraft ? formatNumber(balance) : expected.principal ? formatNumber(expected.principal) : '',
+  )
   const [memo, setMemo] = useState('')
   const [error, setError] = useState('')
 
@@ -39,11 +43,14 @@ export function LoanPaymentSheet({ loan, onClose }: Props) {
   )
 
   const interest = parseAmount(interestText)
-  const principal = parseAmount(principalText)
+  const entered = parseAmount(principalText)
+  // 잔액 감소액: 일반 대출은 입력한 상환액, 마이너스통장은 (기존 사용액 − 새 사용액)
+  const principal = isOverdraft ? balance - entered : entered
 
   function save() {
-    if (interest <= 0 && principal <= 0) return setError('이자나 원금 중 하나는 입력해 주세요')
-    if (principal > balance) return setError(`원금 상환액이 남은 잔액(${formatWon(balance)})보다 커요`)
+    if (interest <= 0 && principal === 0) return setError(isOverdraft ? '이자나 사용액 변화를 입력해 주세요' : '이자나 원금 중 하나는 입력해 주세요')
+    if (isOverdraft && entered > loan.principal) return setError(`사용액이 한도(${formatWon(loan.principal)})보다 커요`)
+    if (!isOverdraft && principal > balance) return setError(`원금 상환액이 남은 잔액(${formatWon(balance)})보다 커요`)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setError('날짜를 확인해 주세요')
     actions.recordLoanPayment({ loan, date, interest, principal, memo: memo.trim() })
     onClose()
@@ -96,14 +103,22 @@ export function LoanPaymentSheet({ loan, onClose }: Props) {
             <input {...numberField(interestText, setInterestText)} />
           </label>
           <label className="field">
-            <span className="field-label">원금 상환 (원)</span>
+            <span className="field-label">{isOverdraft ? '현재 사용액 (원)' : '원금 상환 (원)'}</span>
             <input {...numberField(principalText, setPrincipalText)} />
           </label>
         </div>
         <p className="hint">
           예상 금액으로 미리 채워 두었어요. 은행 앱의 실제 납부액으로 고쳐 주세요.
           <br />
-          이자는 <b>지출(대출이자)</b>로, 원금 상환은 <b>잔액 차감</b>으로만 반영돼요.
+          {isOverdraft ? (
+            <>
+              이자는 <b>지출(대출이자)</b>로, 사용액은 <b>잔액</b>으로만 반영돼요.
+            </>
+          ) : (
+            <>
+              이자는 <b>지출(대출이자)</b>로, 원금 상환은 <b>잔액 차감</b>으로만 반영돼요.
+            </>
+          )}
         </p>
         <label className="field">
           <span className="field-label">메모 (선택)</span>
@@ -126,7 +141,13 @@ export function LoanPaymentSheet({ loan, onClose }: Props) {
                     <span className="pay-date">{dayLabel(p.date)}</span>
                     <span className="pay-amts">
                       이자 {formatWon(tx?.amount ?? 0)}
-                      {p.principal > 0 && <> · 원금 {formatWon(p.principal)}</>}
+                      {p.kind === 'adjust' ? (
+                        <> · 잔액 {p.principal > 0 ? '−' : '+'}{formatWon(Math.abs(p.principal))} (수정)</>
+                      ) : p.principal > 0 ? (
+                        <> · {isOverdraft ? '사용액 −' : '원금 '}{formatWon(p.principal)}</>
+                      ) : p.principal < 0 ? (
+                        <> · 사용액 +{formatWon(-p.principal)}</>
+                      ) : null}
                     </span>
                     <button
                       type="button"

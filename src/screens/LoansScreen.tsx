@@ -11,6 +11,7 @@ import {
   daysToMaturity,
   expectedPayment,
   interestByLoan,
+  monthlyLoanBalances,
   LOAN_INTEREST_CATEGORY,
   LOAN_KINDS,
   REPAYMENT_LABELS,
@@ -48,7 +49,15 @@ export function LoansScreen({ month, onMonthChange, onAddLoan, onEditLoan, onPay
   const closedLoans = data.loans.filter((l) => l.closed)
 
   const totalBalance = rows.reduce((a, r) => a + r.balance, 0)
-  const totalPrincipal = rows.reduce((a, r) => a + r.loan.principal, 0)
+  // 마이너스통장은 '한도'라 갚은 원금 비율 계산에서 뺀다.
+  const amortizing = rows.filter((r) => r.loan.kind !== 'overdraft')
+  const totalPrincipal = amortizing.reduce((a, r) => a + r.loan.principal, 0)
+  const amortizingBalance = amortizing.reduce((a, r) => a + r.balance, 0)
+  const repaidShare = totalPrincipal ? (totalPrincipal - amortizingBalance) / totalPrincipal : 0
+  const history = useMemo(() => {
+    const loans = rows.map((r) => r.loan)
+    return { loans, ...monthlyLoanBalances(loans, data.loanPayments) }
+  }, [rows, data.loanPayments])
   const expInterest = rows.reduce((a, r) => a + r.expected.interest, 0)
   const expPrincipal = rows.reduce((a, r) => a + r.expected.principal, 0)
   const avgRate = weightedRate(rows)
@@ -103,10 +112,10 @@ export function LoansScreen({ month, onMonthChange, onAddLoan, onEditLoan, onPay
             <hr />
             <div className="lime-row">
               <span>갚은 원금</span>
-              <b>{formatPercent((totalPrincipal - totalBalance) / totalPrincipal)}</b>
+              <b>{formatPercent(repaidShare)}</b>
             </div>
             <div className="lime-track">
-              <div className="lime-fill" style={{ width: `${Math.min(1, (totalPrincipal - totalBalance) / totalPrincipal) * 100}%` }} />
+              <div className="lime-fill" style={{ width: `${Math.min(1, Math.max(0, repaidShare)) * 100}%` }} />
             </div>
             <div className="lime-row last">
               <span>이번 달 예상 이자</span>
@@ -215,6 +224,56 @@ export function LoansScreen({ month, onMonthChange, onAddLoan, onEditLoan, onPay
         </section>
       )}
 
+      {history.months.length > 1 && (
+        <section className="card">
+          <div className="eyebrow">BALANCE HISTORY</div>
+          <h2 className="card-title">월별 대출 잔액</h2>
+          <p className="card-sub" style={{ marginTop: 6 }}>
+            매달 말일 기준 잔액이에요. 막대를 누르면 대출별 금액이 보여요.
+          </p>
+          {history.loans.length > 1 && (
+            <div className="legend">
+              {history.loans.slice(0, 5).map((l, i) => (
+                <span key={l.id}>
+                  <span className="swatch" style={{ background: SLICE_COLORS[i] }} />
+                  {l.name}
+                </span>
+              ))}
+              {history.loans.length > 5 && (
+                <span>
+                  <span className="swatch" style={{ background: 'var(--c-other)' }} />
+                  기타
+                </span>
+              )}
+            </div>
+          )}
+          <ColumnChart
+            stacked
+            labels={history.months.map((m) => `${Number(m.slice(5))}`)}
+            series={[
+              ...history.loans.slice(0, 5).map((l, i) => ({ name: l.name, color: SLICE_COLORS[i] })),
+              ...(history.loans.length > 5 ? [{ name: '기타', color: 'var(--c-other)' }] : []),
+            ]}
+            values={history.values.map((row) => (row.length > 5 ? [...row.slice(0, 5), row.slice(5).reduce((a, b) => a + b, 0)] : row))}
+            height={190}
+            tooltipTitle={(i) => monthLabel(history.months[i]) + ' 말'}
+          />
+          {(() => {
+            // 처음 달과 비교하면 새 대출을 받은 것까지 섞이므로 바로 전달과 비교한다.
+            const n = history.values.length
+            const prev = history.values[n - 2].reduce((a, b) => a + b, 0)
+            const last = history.values[n - 1].reduce((a, b) => a + b, 0)
+            const diff = last - prev
+            if (diff === 0) return <p className="delta">지난달 말과 잔액이 같아요</p>
+            return (
+              <p className={diff < 0 ? 'delta good' : 'delta bad'}>
+                {diff < 0 ? '▼' : '▲'} 지난달 말보다 {formatWon(Math.abs(diff))} {diff < 0 ? '줄었어요' : '늘었어요'}
+              </p>
+            )
+          })()}
+        </section>
+      )}
+
       {yearTotal > 0 && (
         <section className="card">
           <div className="eyebrow">YEARLY</div>
@@ -287,7 +346,9 @@ function LoanCard({
   onPay: () => void
 }) {
   const days = daysToMaturity(loan)
-  const repaidRatio = loan.principal ? (loan.principal - balance) / loan.principal : 0
+  const isOverdraft = loan.kind === 'overdraft'
+  // 일반 대출은 갚은 비율, 마이너스통장은 한도 대비 사용 비율을 막대로 보여준다.
+  const ratio = loan.principal ? (isOverdraft ? balance : loan.principal - balance) / loan.principal : 0
   const months = Math.ceil(days / 30.4)
   // 만기 1년 이내면 연장·상환 계획이 필요하다는 신호를 준다(아이콘+문구로, 색만으로 전달하지 않음).
   const soon = days >= 0 && days <= 365
@@ -301,22 +362,24 @@ function LoanCard({
         <div className="loan-title">
           <b>{loan.name}</b>
           <span>
-            {[loan.lender, LOAN_KINDS[loan.kind].label, REPAYMENT_LABELS[loan.repayment]].filter(Boolean).join(' · ')}
+            {[loan.lender, LOAN_KINDS[loan.kind].label, isOverdraft ? '' : REPAYMENT_LABELS[loan.repayment]].filter(Boolean).join(' · ')}
           </span>
         </div>
         <span className={overdue || soon ? 'dday warn' : 'dday'}>{overdue ? '만기 지남' : days === 0 ? '오늘 만기' : `D-${days}`}</span>
       </div>
 
       <div className="loan-balance">
-        <span>남은 잔액</span>
+        <span>{isOverdraft ? '현재 사용액' : '남은 잔액'}</span>
         <strong>{formatWon(balance)}</strong>
       </div>
-      <div className="loan-track" aria-label={`원금의 ${formatPercent(repaidRatio)} 상환`}>
-        <div className="loan-fill" style={{ width: `${Math.min(1, Math.max(0, repaidRatio)) * 100}%` }} />
+      <div className="loan-track" aria-label={isOverdraft ? `한도의 ${formatPercent(ratio)} 사용` : `원금의 ${formatPercent(ratio)} 상환`}>
+        <div className={isOverdraft ? 'loan-fill used' : 'loan-fill'} style={{ width: `${Math.min(1, Math.max(0, ratio)) * 100}%` }} />
       </div>
       <div className="loan-track-caption">
-        <span>갚은 원금 {formatPercent(repaidRatio)}</span>
-        <span>대출금 {formatWon(loan.principal)}</span>
+        <span>{isOverdraft ? `한도 사용 ${formatPercent(ratio)}` : `갚은 원금 ${formatPercent(ratio)}`}</span>
+        <span>
+          {isOverdraft ? '한도' : '대출금'} {formatWon(loan.principal)}
+        </span>
       </div>
 
       <dl className="loan-facts">
@@ -329,8 +392,8 @@ function LoanCard({
           <dd>{formatWon(expected.interest)}</dd>
         </div>
         <div>
-          <dt>예상 원금 상환</dt>
-          <dd>{formatWon(expected.principal)}</dd>
+          <dt>{isOverdraft ? '남은 한도' : '예상 원금 상환'}</dt>
+          <dd>{formatWon(isOverdraft ? Math.max(0, loan.principal - balance) : expected.principal)}</dd>
         </div>
         <div>
           <dt>만기일</dt>
@@ -350,7 +413,7 @@ function LoanCard({
 
       <div className="loan-actions">
         <button type="button" className="lime-btn" onClick={onPay}>
-          납부 기록
+          {isOverdraft ? '이자·사용액 기록' : '납부 기록'}
         </button>
         <button type="button" className="secondary-btn small" onClick={onEdit}>
           수정

@@ -6,7 +6,8 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'exp-living', type: 'expense', name: '생활용품', emoji: '🧻' },
   { id: 'exp-transport', type: 'expense', name: '교통', emoji: '🚇' },
   { id: 'exp-housing', type: 'expense', name: '주거·관리비', emoji: '🏠' },
-  { id: 'exp-telecom', type: 'expense', name: '통신·구독', emoji: '📱' },
+  { id: 'exp-telecom', type: 'expense', name: '통신', emoji: '📱' },
+  { id: 'exp-subscription', type: 'expense', name: '구독', emoji: '🔁' },
   { id: 'exp-shopping', type: 'expense', name: '쇼핑', emoji: '🛍️' },
   { id: 'exp-health', type: 'expense', name: '의료·건강', emoji: '💊' },
   { id: 'exp-culture', type: 'expense', name: '문화·여가', emoji: '🎬' },
@@ -30,5 +31,7 @@ export function createInitialData(): LedgerData {
     theme: 'system',
     loans: [],
     loanPayments: [],
+    assets: [],
+    assetSnapshots: [],
   }
 }
